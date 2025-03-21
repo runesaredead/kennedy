@@ -1,0 +1,1036 @@
+image.png<!DOCTYPE html>
+<html>
+<head>
+    <title>Kennedy JFK Voxel Viewer</title>
+    <style>
+        body { 
+            margin: 0;
+            overflow: hidden;
+            background-color: #121212;
+            font-family: monospace;
+        }
+        canvas { 
+            display: block;
+        }
+        #loading {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #aaa;
+            text-align: center;
+            background-color: rgba(0,0,0,0.7);
+            padding: 20px;
+            border-radius: 10px;
+        }
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #333;
+            border-top: 3px solid #4CAF50;
+            border-radius: 50%;
+            margin: 0 auto 10px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0,0,0,0.5);
+            padding: 10px;
+            border-radius: 5px;
+            max-width: 300px;
+        }
+        #controls {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            color: white;
+            background: rgba(0,0,0,0.5);
+            padding: 10px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading">
+        <div class="spinner"></div>
+        Loading JFK voxel model...
+    </div>
+
+    <div id="info">
+        <h3>"Libraries should be open to all, except the censor." - JFK</h3>
+        <p>Over sixty-eight thousand Kennedy files released on 3/18/2025 by order of President Trump have been scaled down, compressed, and integrated into this 3D interactive piece.</p>
+    </div>
+    
+    <div id="controls">
+        <div>Double-click: Reset view</div>
+        <div>Mouse drag: Rotate</div>
+        <div>Scroll: Zoom</div>
+        <div>Right-click drag: Pan</div>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.162.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.162.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // Scene setup
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x121212);
+        
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(150, 150, 150);
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        document.body.appendChild(renderer.domElement);
+
+        // Animation state
+        let isAnimating = false;
+        let animationStartTime = 0;
+        const animationDuration = 3000; // 3 seconds
+
+        // Lighting setup 
+        const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
+        scene.add(ambientLight);
+
+        // Add directional lights for better visibility
+        const light1 = new THREE.DirectionalLight(0xffffff, 0.8);
+        light1.position.set(1, 1, 1);
+        scene.add(light1);
+
+        const light2 = new THREE.DirectionalLight(0xffffff, 0.5);
+        light2.position.set(-1, 0.5, -1);
+        scene.add(light2);
+
+        // Controls
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.screenSpacePanning = false;
+        controls.minDistance = 50;
+        controls.maxDistance = 500;
+
+        // Voxel data
+        let voxelData = null;
+        let voxelGroup = null;
+        const explosionFactor = 0.3; // Fixed explosion factor
+        
+        // Load sprite texture for thumbnails
+        const textureLoader = new THREE.TextureLoader();
+        let spriteTexture = null;
+        let spriteMetadata = null;
+
+        // Load sprite sheet metadata
+        async function loadSpriteMetadata() {
+            try {
+                const response = await fetch('sprites/pdf_sprites_metadata.json');
+                if (response.ok) {
+                    return await response.json();
+                } else {
+                    // Fallback metadata if file not available
+                    return {
+                        grid_width: 400,
+                        grid_height: 172,
+                        sprite_width: 20,
+                        sprite_height: 25,
+                        total_sprites: 68546
+                    };
+                }
+            } catch (error) {
+                console.error('Error loading sprite metadata:', error);
+                // Fallback metadata
+                return {
+                    grid_width: 400,
+                    grid_height: 172, 
+                    sprite_width: 20,
+                    sprite_height: 25,
+                    total_sprites: 68546
+                };
+            }
+        }
+
+        // Function to handle camera animation
+        function updateCameraAnimation() {
+            if (!isAnimating) return;
+
+            const elapsed = Date.now() - animationStartTime;
+            let progress = Math.min(elapsed / animationDuration, 1);
+
+            // Smooth easing function
+            progress = progress < 0.5
+                ? 4 * progress * progress * progress
+                : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+            // Interpolate camera position
+            camera.position.lerpVectors(
+                new THREE.Vector3(
+                    camera.userData.finalTarget.x + 300,
+                    camera.userData.finalTarget.y + 400,
+                    camera.userData.finalTarget.z + 300
+                ),
+                camera.userData.finalPosition,
+                progress
+            );
+
+            // Add a gentler swing effect
+            if (progress < 1) {
+                const swing = Math.sin(progress * Math.PI) * (1 - progress) * 10;
+                camera.position.y += swing;
+            }
+
+            // Look at the target throughout the animation
+            controls.target.copy(camera.userData.finalTarget);
+            controls.update();
+
+            if (progress >= 1) {
+                isAnimating = false;
+                controls.enabled = true;
+            }
+        }
+
+        // Modify loadVoxelData to trigger animation
+        async function loadVoxelData() {
+            try {
+                const loadingElement = document.getElementById('loading');
+                
+                // First load the sprite texture
+                loadingElement.innerHTML = `
+                    <div class="spinner"></div>
+                    Loading thumbnails...
+                `;
+                
+                spriteTexture = await new Promise((resolve, reject) => {
+                    textureLoader.load(
+                        'sprites/pdf_sprites_tiny.jpg',
+                        resolve,
+                        undefined,
+                        reject
+                    );
+                });
+                
+                // Load sprite metadata
+                spriteMetadata = await loadSpriteMetadata();
+                
+                // Then load voxel data
+                loadingElement.innerHTML = `
+                    <div class="spinner"></div>
+                    Loading voxel model...
+                `;
+                
+                const response = await fetch('kennedyvoxels/kennedy_paddy.vox.json');
+                if (!response.ok) {
+                    throw new Error(`Failed to load voxel data (${response.status})`);
+                }
+                
+                voxelData = await response.json();
+                
+                // Build voxel model
+                loadingElement.innerHTML = `
+                    <div class="spinner"></div>
+                    Building voxel model...
+                `;
+                
+                await buildVoxelModel();
+                
+                // Calculate model center
+                const center = calculateModelCenter();
+                
+                // Set up camera animation
+                camera.userData.finalTarget = new THREE.Vector3(center.x, center.y, center.z);
+                camera.userData.finalPosition = new THREE.Vector3(
+                    center.x, // Directly in front
+                    center.y + 20, // Slightly above
+                    center.z + 180 // Distance from model
+                );
+
+                // Start from current position (higher and at an angle)
+                camera.position.set(
+                    center.x + 300,
+                    center.y + 400,
+                    center.z + 300
+                );
+
+                // Initialize animation
+                isAnimating = true;
+                animationStartTime = Date.now();
+                controls.enabled = false; // Disable controls during animation
+
+                // Save default view for reset
+                camera.userData.defaultPosition = camera.userData.finalPosition.clone();
+                camera.userData.defaultTarget = camera.userData.finalTarget.clone();
+                
+                // Add explosion directions and distances to voxel data
+                addExplosionData();
+                
+                // Apply initial explosion
+                updateExplosion();
+                
+                // Add thumbnail sprites
+                addThumbnails();
+                
+                // Hide loading screen
+                loadingElement.style.display = 'none';
+                
+            } catch (error) {
+                console.error('Error loading voxel data:', error);
+                document.getElementById('loading').innerHTML = `
+                    <div style="color: #ff5555">Error: ${error.message}</div>
+                    <div style="margin-top: 10px; color: #aaa">
+                        Please check the console for more details.
+                    </div>
+                `;
+            }
+        }
+
+        // Build voxel model from data
+        async function buildVoxelModel() {
+            if (!voxelData || !voxelData.p) {
+                console.error("No valid voxel data available");
+                return;
+            }
+            
+            try {
+                // Clear existing group if it exists
+                if (voxelGroup) {
+                    scene.remove(voxelGroup);
+                    voxelGroup.clear();
+                }
+                
+                // Create a group for all voxels
+                voxelGroup = new THREE.Group();
+                scene.add(voxelGroup);
+                
+                // Create voxel geometry
+                const geometry = new THREE.BoxGeometry(2, 2, 2);
+                
+                // Process voxels in batches to avoid freezing the browser
+                const totalVoxels = voxelData.p.length / 3;
+                const batchSize = 500;
+                const batches = Math.ceil(totalVoxels / batchSize);
+                
+                for (let batch = 0; batch < batches; batch++) {
+                    const start = batch * batchSize;
+                    const end = Math.min((batch + 1) * batchSize, totalVoxels);
+                    
+                    for (let i = start; i < end; i++) {
+                        // Get position
+                        const x = voxelData.p[i * 3];
+                        const y = voxelData.p[i * 3 + 1];
+                        const z = voxelData.p[i * 3 + 2];
+                        
+                        // Get color - make sure to handle the different formats
+                        let r, g, b;
+                        
+                        if (voxelData.i && voxelData.c && i < voxelData.i.length) {
+                            // If using color indices
+                            const colorIdx = voxelData.i[i];
+                            r = voxelData.c[colorIdx * 3] / 255;
+                            g = voxelData.c[colorIdx * 3 + 1] / 255;
+                            b = voxelData.c[colorIdx * 3 + 2] / 255;
+                        } else if (voxelData.c) {
+                            // Direct color values
+                            r = voxelData.c[i * 3] / 255;
+                            g = voxelData.c[i * 3 + 1] / 255;
+                            b = voxelData.c[i * 3 + 2] / 255;
+                        } else {
+                            // Fallback color if no color data
+                            r = 0.7;
+                            g = 0.7;
+                            b = 0.7;
+                        }
+                        
+                        // Create material
+                        const material = new THREE.MeshLambertMaterial({
+                            color: new THREE.Color(r, g, b),
+                            transparent: true,
+                            opacity: 0.5  // Make voxels 50% transparent
+                        });
+                        
+                        // Create mesh
+                        const cube = new THREE.Mesh(geometry, material);
+                        cube.position.set(x, y, z);
+                        
+                        // Store original position for explosion effect
+                        cube.userData = {
+                            originalPosition: new THREE.Vector3(x, y, z),
+                            index: i
+                        };
+                        
+                        voxelGroup.add(cube);
+                    }
+                    
+                    // Yield to browser to avoid freezing
+                    await new Promise(resolve => setTimeout(resolve, 0));
+                }
+                
+                console.log(`Built voxel model with ${voxelGroup.children.length} voxels`);
+                
+                // Apply initial explosion effect
+                updateExplosion();
+                
+                return true;
+            } catch (error) {
+                console.error("Error building voxel model:", error);
+                document.getElementById('loading').innerHTML = `
+                    <div style="color: #ff5555">Error building model: ${error.message}</div>
+                    <div style="margin-top: 10px; color: #aaa">
+                        Please check the console for more details.
+                    </div>
+                `;
+                return false;
+            }
+        }
+
+        // Calculate model center
+        function calculateModelCenter() {
+            if (!voxelData || !voxelData.p) return { x: 0, y: 0, z: 0 };
+            
+            const totalVoxels = voxelData.p.length / 3;
+            let sumX = 0, sumY = 0, sumZ = 0;
+            
+            for (let i = 0; i < totalVoxels; i++) {
+                sumX += voxelData.p[i * 3];
+                sumY += voxelData.p[i * 3 + 1];
+                sumZ += voxelData.p[i * 3 + 2];
+            }
+            
+            return {
+                x: sumX / totalVoxels,
+                y: sumY / totalVoxels,
+                z: sumZ / totalVoxels
+            };
+        }
+
+        // Add explosion data to voxel model
+        function addExplosionData() {
+            if (!voxelData || !voxelGroup) return;
+            
+            // Calculate center
+            const center = calculateModelCenter();
+            
+            // Create arrays for directions and distances
+            const directions = [];
+            const distances = [];
+            
+            // Calculate for each voxel
+            for (let i = 0; i < voxelGroup.children.length; i++) {
+                const voxel = voxelGroup.children[i];
+                const pos = voxel.userData.originalPosition;
+                
+                // Direction from center (normalized)
+                const dx = pos.x - center.x;
+                const dy = pos.y - center.y;
+                const dz = pos.z - center.z;
+                
+                // Calculate distance
+                const distance = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                
+                // Normalize direction
+                const length = Math.max(0.001, distance);
+                const dirX = dx / length;
+                const dirY = dy / length;
+                const dirZ = dz / length;
+                
+                // Store direction and distance
+                directions.push(dirX, dirY, dirZ);
+                distances.push(distance / 100); // Scale down for reasonable explosion
+                
+                // Store in voxel for easier access
+                voxel.userData.direction = new THREE.Vector3(dirX, dirY, dirZ);
+                voxel.userData.distance = distance / 100;
+            }
+            
+            // Store in voxel data
+            voxelData.explosion = {
+                directions: directions,
+                distances: distances
+            };
+        }
+
+        // Create batched thumbnails for better performance
+        function createBatchedThumbnails(positions, direction, count) {
+            if (!positions || positions.length === 0) {
+                console.warn("No positions provided for thumbnails");
+                return [];
+            }
+            
+            // Ensure window.thumbnailContainer exists
+            if (!window.thumbnailContainer) {
+                window.thumbnailContainer = new THREE.Group();
+                scene.add(window.thumbnailContainer);
+            }
+            
+            // Ensure window.allUsedIndices exists
+            if (!window.allUsedIndices) {
+                window.allUsedIndices = new Set();
+            }
+            
+            // Calculate grid distribution
+            const gridSize = Math.ceil(Math.sqrt(positions.length));
+            const cellSize = 2; // Size of each grid cell
+            
+            // Create a grid to track occupied positions
+            const occupiedPositions = new Set();
+            
+            // Create batches based on surface area rather than fixed count
+            const batchSize = 100;
+            const batches = [];
+            const totalBatches = Math.ceil(positions.length / batchSize);
+            
+            // Distribute positions evenly across the surface
+            for (let b = 0; b < totalBatches; b++) {
+                // Create geometry for this batch
+                const geometry = new THREE.BufferGeometry();
+                
+                // Calculate number of thumbnails for this batch
+                const thumbnailsInBatch = Math.min(batchSize, positions.length - b * batchSize);
+                const verticesPerThumbnail = 6;
+                
+                // Arrays for geometry data
+                const vertices = new Float32Array(verticesPerThumbnail * thumbnailsInBatch * 3);
+                const uvs = new Float32Array(verticesPerThumbnail * thumbnailsInBatch * 2);
+                const indices = new Uint16Array(verticesPerThumbnail * thumbnailsInBatch);
+                
+                // Select positions for this batch
+                const batchPositions = [];
+                let positionsFound = 0;
+                let attempts = 0;
+                const maxAttempts = positions.length * 2;
+                
+                while (positionsFound < thumbnailsInBatch && attempts < maxAttempts) {
+                    const randomIndex = Math.floor(Math.random() * positions.length);
+                    const pos = positions[randomIndex].position;
+                    const key = `${Math.round(pos.x)},${Math.round(pos.y)},${Math.round(pos.z)}`;
+                    
+                    if (!occupiedPositions.has(key)) {
+                        occupiedPositions.add(key);
+                        batchPositions.push(positions[randomIndex]);
+                        positionsFound++;
+                    }
+                    attempts++;
+                }
+                
+                // Generate thumbnails for selected positions
+                for (let i = 0; i < batchPositions.length; i++) {
+                    const pos = batchPositions[i].position.clone();
+                    pos.add(direction.clone().multiplyScalar(1.01));
+                    
+                    const thumbnailIndex = Math.floor(Math.random() * spriteMetadata.total_sprites);
+                    window.allUsedIndices.add(thumbnailIndex);
+                    
+                    // Calculate UV coordinates
+                    const spriteWidth = 20;
+                    const spriteHeight = 25;
+                    const col = thumbnailIndex % spriteMetadata.grid_width;
+                    const row = Math.floor(thumbnailIndex / spriteMetadata.grid_width) % spriteMetadata.grid_height;
+                    
+                    const uvLeft = col * spriteWidth / spriteTexture.image.width;
+                    const uvRight = uvLeft + spriteWidth / spriteTexture.image.width;
+                    const uvTop = row * spriteHeight / spriteTexture.image.height;
+                    const uvBottom = uvTop + spriteHeight / spriteTexture.image.height;
+                    
+                    // Size of plane (slightly smaller than voxel)
+                    const size = 0.95;
+                    
+                    // Calculate plane vertices
+                    const right = new THREE.Vector3(1, 0, 0);
+                    const up = new THREE.Vector3(0, 1, 0);
+                    
+                    if (direction.z !== 0) {
+                        // For front/back faces, keep standard orientation
+                    } else if (direction.x !== 0) {
+                        right.set(0, 0, -direction.x);
+                        up.set(0, 1, 0);
+                    } else if (direction.y !== 0) {
+                        right.set(1, 0, 0);
+                        up.set(0, 0, direction.y);
+                    }
+                    
+                    // Calculate corners
+                    const topLeft = pos.clone().add(right.clone().multiplyScalar(-size)).add(up.clone().multiplyScalar(size));
+                    const topRight = pos.clone().add(right.clone().multiplyScalar(size)).add(up.clone().multiplyScalar(size));
+                    const bottomLeft = pos.clone().add(right.clone().multiplyScalar(-size)).add(up.clone().multiplyScalar(-size));
+                    const bottomRight = pos.clone().add(right.clone().multiplyScalar(size)).add(up.clone().multiplyScalar(-size));
+                    
+                    // Set vertices and UVs
+                    const baseIndex = i * verticesPerThumbnail * 3;
+                    const uvBaseIndex = i * verticesPerThumbnail * 2;
+                    
+                    // First triangle
+                    vertices[baseIndex + 0] = topLeft.x;
+                    vertices[baseIndex + 1] = topLeft.y;
+                    vertices[baseIndex + 2] = topLeft.z;
+                    
+                    vertices[baseIndex + 3] = bottomLeft.x;
+                    vertices[baseIndex + 4] = bottomLeft.y;
+                    vertices[baseIndex + 5] = bottomLeft.z;
+                    
+                    vertices[baseIndex + 6] = topRight.x;
+                    vertices[baseIndex + 7] = topRight.y;
+                    vertices[baseIndex + 8] = topRight.z;
+                    
+                    // Second triangle
+                    vertices[baseIndex + 9] = bottomLeft.x;
+                    vertices[baseIndex + 10] = bottomLeft.y;
+                    vertices[baseIndex + 11] = bottomLeft.z;
+                    
+                    vertices[baseIndex + 12] = bottomRight.x;
+                    vertices[baseIndex + 13] = bottomRight.y;
+                    vertices[baseIndex + 14] = bottomRight.z;
+                    
+                    vertices[baseIndex + 15] = topRight.x;
+                    vertices[baseIndex + 16] = topRight.y;
+                    vertices[baseIndex + 17] = topRight.z;
+                    
+                    // UVs for both triangles
+                    uvs[uvBaseIndex + 0] = uvLeft;  uvs[uvBaseIndex + 1] = uvTop;
+                    uvs[uvBaseIndex + 2] = uvLeft;  uvs[uvBaseIndex + 3] = uvBottom;
+                    uvs[uvBaseIndex + 4] = uvRight; uvs[uvBaseIndex + 5] = uvTop;
+                    uvs[uvBaseIndex + 6] = uvLeft;  uvs[uvBaseIndex + 7] = uvBottom;
+                    uvs[uvBaseIndex + 8] = uvRight; uvs[uvBaseIndex + 9] = uvBottom;
+                    uvs[uvBaseIndex + 10] = uvRight; uvs[uvBaseIndex + 11] = uvTop;
+                    
+                    // Set indices
+                    for (let j = 0; j < verticesPerThumbnail; j++) {
+                        indices[i * verticesPerThumbnail + j] = i * verticesPerThumbnail + j;
+                    }
+                }
+                
+                // Set geometry attributes
+                geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+                geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+                geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+                
+                // Create material
+                const material = new THREE.MeshBasicMaterial({
+                    map: spriteTexture,
+                    transparent: true,
+                    opacity: 0.5,
+                    depthWrite: false,
+                    depthTest: true,
+                    side: THREE.DoubleSide
+                });
+                
+                // Create mesh
+                const batchMesh = new THREE.Mesh(geometry, material);
+                window.thumbnailContainer.add(batchMesh);
+                
+                // Store batch info
+                batches.push({
+                    mesh: batchMesh,
+                    geometry: geometry,
+                    count: thumbnailsInBatch,
+                    lastUpdate: Date.now(),
+                    updateInterval: 500 + Math.random() * 1000,
+                    positions: batchPositions
+                });
+            }
+            
+            return batches;
+        }
+        
+        // Add PDF thumbnails to the scene
+        function addThumbnails() {
+            if (!voxelGroup || !spriteTexture || !spriteMetadata) return;
+            
+            // Create a container for thumbnails
+            if (!window.thumbnailContainer) {
+                window.thumbnailContainer = new THREE.Group();
+                scene.add(window.thumbnailContainer);
+            }
+            
+            // Initialize tracking variables
+            window.allUsedIndices = new Set();
+            window.lastUpdate = Date.now();
+            window.startTime = Date.now();
+            window.lastStatsUpdate = 0;
+            window.thumbnailUpdateCountdown = 100;
+            
+            // Find all surface voxels in all directions
+            const surfaceVoxels = {
+                front: [], // z-positive
+                back: [],  // z-negative
+                left: [],  // x-negative
+                right: [], // x-positive
+                top: [],   // y-positive
+                bottom: [] // y-negative
+            };
+            
+            // Get model center
+            const center = calculateModelCenter();
+
+            // Identify surface voxels in all 6 directions
+            voxelGroup.children.forEach(voxel => {
+                const pos = voxel.position;
+                
+                // Create keys for each projection plane
+                const keyXY = `${Math.round(pos.x)},${Math.round(pos.y)}`;
+                const keyXZ = `${Math.round(pos.x)},${Math.round(pos.z)}`;
+                const keyYZ = `${Math.round(pos.y)},${Math.round(pos.z)}`;
+                
+                // Check each direction and add to the corresponding array
+                // We check for voxels that are in the furthest positions in each direction
+                
+                // Front (highest z for each x,y)
+                if (!surfaceVoxels.frontMap) surfaceVoxels.frontMap = new Map();
+                if (!surfaceVoxels.frontMap.has(keyXY) || surfaceVoxels.frontMap.get(keyXY).z < pos.z) {
+                    surfaceVoxels.frontMap.set(keyXY, {voxel, z: pos.z});
+                }
+                
+                // Back (lowest z for each x,y)
+                if (!surfaceVoxels.backMap) surfaceVoxels.backMap = new Map();
+                if (!surfaceVoxels.backMap.has(keyXY) || surfaceVoxels.backMap.get(keyXY).z > pos.z) {
+                    surfaceVoxels.backMap.set(keyXY, {voxel, z: pos.z});
+                }
+                
+                // Right (highest x for each y,z)
+                if (!surfaceVoxels.rightMap) surfaceVoxels.rightMap = new Map();
+                if (!surfaceVoxels.rightMap.has(keyYZ) || surfaceVoxels.rightMap.get(keyYZ).x < pos.x) {
+                    surfaceVoxels.rightMap.set(keyYZ, {voxel, x: pos.x});
+                }
+                
+                // Left (lowest x for each y,z)
+                if (!surfaceVoxels.leftMap) surfaceVoxels.leftMap = new Map();
+                if (!surfaceVoxels.leftMap.has(keyYZ) || surfaceVoxels.leftMap.get(keyYZ).x > pos.x) {
+                    surfaceVoxels.leftMap.set(keyYZ, {voxel, x: pos.x});
+                }
+                
+                // Top (highest y for each x,z)
+                if (!surfaceVoxels.topMap) surfaceVoxels.topMap = new Map();
+                if (!surfaceVoxels.topMap.has(keyXZ) || surfaceVoxels.topMap.get(keyXZ).y < pos.y) {
+                    surfaceVoxels.topMap.set(keyXZ, {voxel, y: pos.y});
+                }
+                
+                // Bottom (lowest y for each x,z)
+                if (!surfaceVoxels.bottomMap) surfaceVoxels.bottomMap = new Map();
+                if (!surfaceVoxels.bottomMap.has(keyXZ) || surfaceVoxels.bottomMap.get(keyXZ).y > pos.y) {
+                    surfaceVoxels.bottomMap.set(keyXZ, {voxel, y: pos.y});
+                }
+            });
+            
+            // Convert maps to arrays for each direction
+            surfaceVoxels.front = Array.from(surfaceVoxels.frontMap.values()).map(v => ({
+                position: v.voxel.position.clone()
+            }));
+            
+            surfaceVoxels.back = Array.from(surfaceVoxels.backMap.values()).map(v => ({
+                position: v.voxel.position.clone()
+            }));
+            
+            surfaceVoxels.right = Array.from(surfaceVoxels.rightMap.values()).map(v => ({
+                position: v.voxel.position.clone()
+            }));
+            
+            surfaceVoxels.left = Array.from(surfaceVoxels.leftMap.values()).map(v => ({
+                position: v.voxel.position.clone()
+            }));
+            
+            surfaceVoxels.top = Array.from(surfaceVoxels.topMap.values()).map(v => ({
+                position: v.voxel.position.clone()
+            }));
+            
+            surfaceVoxels.bottom = Array.from(surfaceVoxels.bottomMap.values()).map(v => ({
+                position: v.voxel.position.clone()
+            }));
+            
+            console.log(`Surface voxels found:
+                Front: ${surfaceVoxels.front.length}
+                Back: ${surfaceVoxels.back.length}
+                Left: ${surfaceVoxels.left.length}
+                Right: ${surfaceVoxels.right.length}
+                Top: ${surfaceVoxels.top.length}
+                Bottom: ${surfaceVoxels.bottom.length}
+            `);
+            
+            // Create direction vectors for each face
+            const directions = {
+                front: new THREE.Vector3(0, 0, 1),
+                back: new THREE.Vector3(0, 0, -1),
+                right: new THREE.Vector3(1, 0, 0),
+                left: new THREE.Vector3(-1, 0, 0),
+                top: new THREE.Vector3(0, 1, 0),
+                bottom: new THREE.Vector3(0, -1, 0)
+            };
+            
+            // Create thumbnail batches for all sides
+            try {
+                // Calculate coverage percentage for each side (distribute across all sides)
+                const totalPositions = Object.values(surfaceVoxels).reduce(
+                    (total, positions) => total + (Array.isArray(positions) ? positions.length : 0), 
+                    0
+                );
+                
+                console.log(`Total surface positions: ${totalPositions}`);
+                
+                // Create batches for each side
+                window.thumbnailBatches = {};
+                
+                // For each side, create batches covering about 70% of the available surface
+                Object.keys(directions).forEach(side => {
+                    if (Array.isArray(surfaceVoxels[side]) && surfaceVoxels[side].length > 0) {
+                        const count = Math.ceil(surfaceVoxels[side].length * 0.7);
+                        window.thumbnailBatches[side] = createBatchedThumbnails(
+                            surfaceVoxels[side], 
+                            directions[side], 
+                            count
+                        );
+                    }
+                });
+                
+                // Animation loop for thumbnails
+                function updateThumbnailAnimation() {
+                    const currentTime = Date.now();
+                    const deltaTime = currentTime - window.lastUpdate;
+                    window.lastUpdate = currentTime;
+                    
+                    // Update batches on a timer to avoid per-frame updates
+                    window.thumbnailUpdateCountdown -= deltaTime;
+                    if (window.thumbnailUpdateCountdown <= 0) {
+                        window.thumbnailUpdateCountdown = 100; // Reset timer
+                        
+                        // Update thumbnails on all sides
+                        Object.keys(directions).forEach(side => {
+                            if (window.thumbnailBatches[side]) {
+                                for (const batch of window.thumbnailBatches[side]) {
+                                    updateBatchThumbnails(batch, surfaceVoxels[side], directions[side]);
+                                }
+                            }
+                        });
+                    }
+                    
+                    // Update coverage statistics
+                    if (currentTime - window.lastStatsUpdate >= 5000) {
+                        const coverage = (window.allUsedIndices.size / spriteMetadata.total_sprites * 100).toFixed(2);
+                        const timeElapsed = ((currentTime - window.startTime) / 1000).toFixed(1);
+                        console.log(`After ${timeElapsed}s: ${window.allUsedIndices.size} unique thumbnails (${coverage}%)`);
+                        window.lastStatsUpdate = currentTime;
+                        
+                        if (window.allUsedIndices.size >= spriteMetadata.total_sprites || timeElapsed > 120) {
+                            console.log('Resetting coverage tracking...');
+                            window.allUsedIndices = new Set();
+                            window.startTime = currentTime;
+                        }
+                    }
+                    
+                    requestAnimationFrame(updateThumbnailAnimation);
+                }
+                
+                // Start the animation loop
+                updateThumbnailAnimation();
+            } catch (error) {
+                console.error("Error in thumbnail setup:", error);
+                // Display error in UI
+                const errorDiv = document.createElement('div');
+                errorDiv.style.position = 'absolute';
+                errorDiv.style.top = '10px';
+                errorDiv.style.left = '10px';
+                errorDiv.style.background = 'rgba(255,0,0,0.7)';
+                errorDiv.style.color = 'white';
+                errorDiv.style.padding = '10px';
+                errorDiv.style.borderRadius = '5px';
+                errorDiv.innerHTML = `Error: ${error.message}<br>See console for details`;
+                document.body.appendChild(errorDiv);
+            }
+        }
+        
+        // Update batch thumbnails
+        function updateBatchThumbnails(batch, positions, direction) {
+            if (!batch || !positions || !positions.length || !window.allUsedIndices) {
+                return; // Skip if any required data is missing
+            }
+            
+            const now = Date.now();
+            
+            // Check if it's time to update this batch
+            if (now - batch.lastUpdate < batch.updateInterval) {
+                return;
+            }
+            
+            // Set new update time
+            batch.lastUpdate = now;
+            batch.updateInterval = 500 + Math.random() * 1000; // Random update interval
+            
+            try {
+                // Get geometry data
+                const positionAttr = batch.geometry.getAttribute('position');
+                const uvAttr = batch.geometry.getAttribute('uv');
+                
+                if (!positionAttr || !uvAttr) {
+                    console.warn("Missing geometry attributes in batch");
+                    return;
+                }
+                
+                // Number of thumbnails in this batch
+                const thumbnailCount = batch.count;
+                const verticesPerThumbnail = 6; // 2 triangles × 3 vertices
+                
+                // Generate random positions for this batch
+                const batchPositions = [];
+                for (let i = 0; i < thumbnailCount; i++) {
+                    batchPositions.push(positions[Math.floor(Math.random() * positions.length)]);
+                }
+                
+                // Update each thumbnail
+                for (let i = 0; i < thumbnailCount; i++) {
+                    const pos = batchPositions[i].position.clone();
+                    pos.add(direction.clone().multiplyScalar(1.01)); // Slight offset
+                    
+                    // Get new thumbnail index
+                    const thumbnailIndex = Math.floor(Math.random() * spriteMetadata.total_sprites);
+                    window.allUsedIndices.add(thumbnailIndex);
+                    
+                    // Calculate UV coordinates for this thumbnail
+                    const spriteWidth = 20;
+                    const spriteHeight = 25;
+                    const col = thumbnailIndex % spriteMetadata.grid_width;
+                    const row = Math.floor(thumbnailIndex / spriteMetadata.grid_width) % spriteMetadata.grid_height;
+                    
+                    const uvLeft = col * spriteWidth / spriteTexture.image.width;
+                    const uvRight = uvLeft + spriteWidth / spriteTexture.image.width;
+                    const uvTop = row * spriteHeight / spriteTexture.image.height;
+                    const uvBottom = uvTop + spriteHeight / spriteTexture.image.height;
+                    
+                    // Size of plane (slightly smaller than voxel)
+                    const size = 0.95;
+                    
+                    // Calculate plane vertices
+                    // We need to orient the plane to face the direction
+                    const right = new THREE.Vector3(1, 0, 0);
+                    const up = new THREE.Vector3(0, 1, 0);
+                    
+                    if (direction.z !== 0) {
+                        // For front/back (z direction)
+                        // No need to change the right/up vectors
+                    } else if (direction.x !== 0) {
+                        // For left/right (x direction)
+                        right.set(0, 0, -direction.x);
+                        up.set(0, 1, 0);
+                    } else if (direction.y !== 0) {
+                        // For top/bottom (y direction)
+                        right.set(1, 0, 0);
+                        up.set(0, 0, direction.y);
+                    }
+                    
+                    // Calculate corner positions
+                    const topLeft = pos.clone().add(right.clone().multiplyScalar(-size)).add(up.clone().multiplyScalar(size));
+                    const topRight = pos.clone().add(right.clone().multiplyScalar(size)).add(up.clone().multiplyScalar(size));
+                    const bottomLeft = pos.clone().add(right.clone().multiplyScalar(-size)).add(up.clone().multiplyScalar(-size));
+                    const bottomRight = pos.clone().add(right.clone().multiplyScalar(size)).add(up.clone().multiplyScalar(-size));
+                    
+                    // First triangle (top-left, bottom-left, top-right)
+                    const baseIndex = i * verticesPerThumbnail;
+                    
+                    // Triangle 1: top-left, bottom-left, top-right
+                    positionAttr.setXYZ(baseIndex + 0, topLeft.x, topLeft.y, topLeft.z);
+                    positionAttr.setXYZ(baseIndex + 1, bottomLeft.x, bottomLeft.y, bottomLeft.z);
+                    positionAttr.setXYZ(baseIndex + 2, topRight.x, topRight.y, topRight.z);
+                    
+                    // Triangle 2: bottom-left, bottom-right, top-right
+                    positionAttr.setXYZ(baseIndex + 3, bottomLeft.x, bottomLeft.y, bottomLeft.z);
+                    positionAttr.setXYZ(baseIndex + 4, bottomRight.x, bottomRight.y, bottomRight.z);
+                    positionAttr.setXYZ(baseIndex + 5, topRight.x, topRight.y, topRight.z);
+                    
+                    // UV coordinates
+                    // Triangle 1 UVs
+                    uvAttr.setXY(baseIndex + 0, uvLeft, uvTop);
+                    uvAttr.setXY(baseIndex + 1, uvLeft, uvBottom);
+                    uvAttr.setXY(baseIndex + 2, uvRight, uvTop);
+                    
+                    // Triangle 2 UVs
+                    uvAttr.setXY(baseIndex + 3, uvLeft, uvBottom);
+                    uvAttr.setXY(baseIndex + 4, uvRight, uvBottom);
+                    uvAttr.setXY(baseIndex + 5, uvRight, uvTop);
+                }
+                
+                // Update geometry
+                positionAttr.needsUpdate = true;
+                uvAttr.needsUpdate = true;
+            } catch (error) {
+                console.error("Error updating batch thumbnails:", error);
+            }
+        }
+
+        // Update explosion effect
+        function updateExplosion() {
+            if (!voxelGroup) return;
+            
+            try {
+                const center = calculateModelCenter();
+                
+                // Update each voxel position
+                for (let i = 0; i < voxelGroup.children.length; i++) {
+                    const voxel = voxelGroup.children[i];
+                    if (!voxel || !voxel.userData || !voxel.userData.originalPosition) continue;
+                    
+                    const origPos = voxel.userData.originalPosition;
+                    
+                    // Calculate direction from center
+                    const dir = new THREE.Vector3()
+                        .subVectors(origPos, new THREE.Vector3(center.x, center.y, center.z))
+                        .normalize();
+                    
+                    // Calculate distance from center
+                    const dist = origPos.distanceTo(new THREE.Vector3(center.x, center.y, center.z));
+                    
+                    // Calculate explosion offset
+                    const offset = explosionFactor * (dist / 50); // Scale distance for reasonable explosion
+                    
+                    // Calculate new position
+                    const newX = origPos.x + dir.x * offset;
+                    const newY = origPos.y + dir.y * offset;
+                    const newZ = origPos.z + dir.z * offset;
+                    
+                    // Update position
+                    voxel.position.set(newX, newY, newZ);
+                }
+            } catch (error) {
+                console.error("Error updating explosion effect:", error);
+            }
+        }
+
+        // Reset view on double-click
+        renderer.domElement.addEventListener('dblclick', () => {
+            if (camera.userData.defaultPosition && camera.userData.defaultTarget) {
+                camera.position.copy(camera.userData.defaultPosition);
+                controls.target.copy(camera.userData.defaultTarget);
+                controls.update();
+            }
+        });
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            updateCameraAnimation();
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        // Start loading data and animation
+        loadVoxelData();
+        animate();
+    </script>
+</body>
+</html> 
